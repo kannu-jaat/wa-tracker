@@ -9,23 +9,17 @@ const {
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 
-// 1. Environment Variables
 const botToken = process.env.BOT_TOKEN;
 const firebaseUrl = process.env.FIREBASE_URL;
 
-if (!botToken || !firebaseUrl) {
-  console.log("⚠️ BOT_TOKEN ya FIREBASE_URL missing hai!");
-}
-
 const bot = new Bot(botToken);
 
-// 2. Express Server (Render ko zinda rakhne ke liye)
+// 1. Dummy Web Server (Render ko zinda rakhne ke liye)
 const app = express();
-app.get("/", (req, res) => res.send("✅ WhatsApp Cloud Server Live Aur Daud Raha Hai!"));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Web Server PORT ${PORT} par chalu ho gaya.`));
+app.get("/", (req, res) => res.send("✅ WhatsApp Cloud Server Auto-Pilot Mode Me Live Hai!"));
+app.listen(process.env.PORT || 3000);
 
-// 3. Smart Firebase Auth System (Buffer / Debounce Technique)
+// 2. Firebase Auth State Loader
 async function useSmartFirebaseAuthState() {
   let creds;
   let keys = {};
@@ -52,10 +46,8 @@ async function useSmartFirebaseAuthState() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ creds, keys }, BufferJSON.replacer)
       });
-      console.log("📦 Data Batch Firebase par Save Hua!");
-    } catch (e) {
-      console.log("❌ Firebase Save Error:", e.message);
-    }
+      console.log("📦 Backup saved to Firebase.");
+    } catch (e) {}
   };
 
   const state = {
@@ -94,103 +86,82 @@ async function useSmartFirebaseAuthState() {
   };
 }
 
-// 4. Telegram Bot Commands & Menu
+let sock = null;
+
+// 3. MAIN WHATSAPP AUTO-CONNECT FUNCTION
+async function connectToWhatsApp() {
+  console.log("🔄 Firebase se session check kar raha hoon...");
+  const { state, saveCreds } = await useSmartFirebaseAuthState();
+
+  if (sock) {
+    try { sock.end(undefined); } catch(e){}
+  }
+
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    browser: ['Windows', 'Chrome', '120.0.0.0'],
+    markOnlineOnConnect: false,
+    logger: pino({ level: "silent" })
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect } = update;
+
+    if (connection === "open") {
+      console.log("✅ SUCCESS: Render Cloud Server WhatsApp se connect ho gaya!");
+      // Yahan hum baad me Online/Offline tracking ka code daalenge
+    } 
+    
+    if (connection === "close") {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log(`❌ Connection closed. Code: ${statusCode}`);
+
+      // Agar normal network drop hua hai toh auto-reconnect karo
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log("🔄 Network issue. 5 second me reconnect kar raha hoon...");
+        setTimeout(connectToWhatsApp, 5000);
+      } else {
+        console.log("⚠️ Session logout ho gaya! Firebase clean karna padega.");
+        fetch(`${firebaseUrl}/auth.json`, { method: "DELETE" }).catch(()=>{});
+      }
+    }
+  });
+}
+
+// 4. Telegram Controls
 bot.command("start", (ctx) => {
-  ctx.reply("🤖 Cloud Tracker Ready!\n\nControl Panel:", {
+  ctx.reply("🤖 Cloud Auto-Tracker System Live!\n\nOptions:", {
     reply_markup: {
-      keyboard: [
-        [{ text: "📸 Get QR Code" }, { text: "📡 Check Status" }], 
-        [{ text: "🗑️ Reset Firebase" }]
-      ],
+      keyboard: [[{ text: "📡 Check Server Status" }, { text: "🔄 Force Reconnect" }], [{ text: "🗑️ Reset Firebase" }]],
       resize_keyboard: true,
     },
   });
 });
 
-bot.hears("📡 Check Status", (ctx) => ctx.reply("✅ Cloud Server superfast speed pe chal raha hai!"));
+bot.hears("📡 Check Server Status", (ctx) => {
+  const isConnected = sock?.ws?.isOpen;
+  ctx.reply(isConnected ? "🟢 Server ekdum mast chal raha hai aur WhatsApp se CONNECTED hai!" : "🔴 Server chalu hai par WhatsApp se CONNECTED NAHI hai.");
+});
+
+bot.hears("🔄 Force Reconnect", async (ctx) => {
+  await ctx.reply("⏳ Reconnecting...");
+  connectToWhatsApp();
+});
 
 bot.hears("🗑️ Reset Firebase", async (ctx) => {
-  await ctx.reply("⏳ Firebase saaf kar raha hoon...");
   try {
     await fetch(`${firebaseUrl}/auth.json`, { method: "DELETE" });
-    await ctx.reply("✅ Sab clean ho gaya! Puraana kachra saaf.");
+    if(sock) sock.end(undefined);
+    await ctx.reply("🗑️ Firebase completely wiped clean!");
   } catch (err) {
-    await ctx.reply("⚠️ Clean karne me problem aayi.");
+    await ctx.reply("⚠️ Error clearing Firebase.");
   }
 });
 
-let sock;
-
-// 5. WhatsApp Engine (QR Code & Connection)
-bot.hears("📸 Get QR Code", async (ctx) => {
-  await ctx.reply("⏳ QR Code generate kar raha hoon... (Fast Server se)");
-
-  try {
-    const { state, saveCreds } = await useSmartFirebaseAuthState();
-
-    // Puraana connection atka ho toh usko band karo
-    if (sock) {
-      try { sock.end(undefined); } catch(e){}
-    }
-
-    sock = makeWASocket({
-      auth: state,
-      printQRInTerminal: true, // 🔥 Render ke logs/terminal me bhi dikhega
-      browser: Browsers.macOS('Desktop'),
-      markOnlineOnConnect: false, 
-      logger: pino({ level: "silent" }) 
-    });
-
-    sock.ev.on("creds.update", saveCreds);
-
-    sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        console.log("🟢 QR Code generated!");
-        // Fast API for QR Code image
-        const qrImageUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qr)}&size=400`;
-        
-        try {
-          await ctx.replyWithPhoto(qrImageUrl, { 
-            caption: "📸 Naya QR Code!\n\nJaldi se apne dusre phone/PC mein khol kar scan karein." 
-          });
-        } catch (photoErr) {
-          console.log("⚠️ Telegram Photo Error:", photoErr.message);
-          await ctx.reply("⚠️ Telegram ne photo load nahi ki! Kripya Render ke logs (terminal) mein jakar scan karein.");
-        }
-      }
-
-      if (connection === "connecting") {
-         console.log("🔄 Connecting to WhatsApp...");
-      }
-      else if (connection === "open") {
-        await ctx.reply("✅ BINGO! Cloud server par WhatsApp Login Successful! Jadoo chal gaya! 🎉");
-      }
-      else if (connection === "close") {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const errorMsg = lastDisconnect?.error?.message;
-        
-        console.log(`❌ Connection Closed: ${statusCode} - ${errorMsg}`);
-
-        // 405 error (Soft Ban) ko ignore karke baaki errors batayega
-        if (statusCode !== 405) { 
-          await ctx.reply(`❌ Connection Fail!\nWajeh: ${errorMsg} (Code: ${statusCode})`);
-        } else {
-           console.log("⚠️ Code 405 Blocked by WhatsApp.");
-        }
-
-        if (statusCode === DisconnectReason.loggedOut) {
-          await ctx.reply("⚠️ Device Logout ho gaya. '🗑️ Reset Firebase' dabayein aur wapas try karein.");
-          fetch(`${firebaseUrl}/auth.json`, { method: "DELETE" }).catch(()=>{});
-        }
-      }
-    });
-
-  } catch (err) {
-    await ctx.reply(`⚠️ Server Error: ${err.message}`);
-  }
-});
-
+// Server boot hote hi pehle WhatsApp connect karne ki koshish karega
+connectToWhatsApp();
 bot.start();
-console.log("🤖 Telegram Bot Started successfully!");
+console.log("🤖 Cloud System Fully Started!");
