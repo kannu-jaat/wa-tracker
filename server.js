@@ -112,14 +112,12 @@ async function connectToWhatsApp() {
 
     if (connection === "open") {
       console.log("✅ SUCCESS: Render Cloud Server WhatsApp se connect ho gaya!");
-      // Yahan hum baad me Online/Offline tracking ka code daalenge
     } 
     
     if (connection === "close") {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       console.log(`❌ Connection closed. Code: ${statusCode}`);
 
-      // Agar normal network drop hua hai toh auto-reconnect karo
       if (statusCode !== DisconnectReason.loggedOut) {
         console.log("🔄 Network issue. 5 second me reconnect kar raha hoon...");
         setTimeout(connectToWhatsApp, 5000);
@@ -131,19 +129,32 @@ async function connectToWhatsApp() {
   });
 }
 
-// 4. Telegram Controls
+// 4. Telegram Controls (With New Current Status Button)
 bot.command("start", (ctx) => {
-  ctx.reply("🤖 Cloud Auto-Tracker System Live!\n\nOptions:", {
+  ctx.reply("🤖 Cloud Auto-Tracker System Live!\n\nControl Panel:", {
     reply_markup: {
-      keyboard: [[{ text: "📡 Check Server Status" }, { text: "🔄 Force Reconnect" }], [{ text: "🗑️ Reset Firebase" }]],
+      keyboard: [
+        [{ text: "📊 Current Status" }, { text: "🔄 Force Reconnect" }], 
+        [{ text: "🗑️ Reset Firebase" }]
+      ],
       resize_keyboard: true,
     },
   });
 });
 
-bot.hears("📡 Check Server Status", (ctx) => {
+// 🔥 NEW BUTTON HANDLER 🔥
+bot.hears("📊 Current Status", (ctx) => {
   const isConnected = sock?.ws?.isOpen;
-  ctx.reply(isConnected ? "🟢 Server ekdum mast chal raha hai aur WhatsApp se CONNECTED hai!" : "🔴 Server chalu hai par WhatsApp se CONNECTED NAHI hai.");
+  const loggedInUser = sock?.user;
+
+  if (isConnected && loggedInUser) {
+    const myNumber = loggedInUser.id.split(":")[0];
+    const myName = loggedInUser.name || "WhatsApp Device";
+    
+    ctx.reply(`🟢 **Status:** Connected to WhatsApp ✅\n\n📱 **Connected Number:** ${myNumber}\n👤 **Account Name:** ${myName}\n🚀 **Server Speed:** Superfast (Render Cloud)`);
+  } else {
+    ctx.reply("🔴 **Status:** Disconnected ❌\n\n⚠️ Cloud server par abhi koi WhatsApp login nahi hai. Kripya pehle Termux wali script se login karke keys Firebase mein bhejein.");
+  }
 });
 
 bot.hears("🔄 Force Reconnect", async (ctx) => {
@@ -161,7 +172,7 @@ bot.hears("🗑️ Reset Firebase", async (ctx) => {
   }
 });
 
-// Server boot hote hi pehle WhatsApp connect karne ki koshish karega
+// Boot settings
 connectToWhatsApp();
 bot.start();
 console.log("🤖 Cloud System Fully Started!");
